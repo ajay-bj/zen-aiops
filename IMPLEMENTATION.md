@@ -1,5 +1,4 @@
 # zen-aiops — Step-by-Step Implementation Guide (DEV only)
-# zen-aiops — Step-by-Step Implementation Guide (DEV only)
 
 Follow these steps **in order, top to bottom**. Each block is copy-paste runnable.
 Only two things are yours to supply: your **AWS keys** (GitHub repo secrets, Step 3) and a
@@ -41,8 +40,10 @@ things (a fresh fork will NOT build or work until you do):
 **1. Enable GitHub Actions on your fork** (GitHub disables Actions on new forks by default):
 - Actions tab → "I understand my workflows, go ahead and enable them", or:
 ```bash
-gh api -X PUT repos/<YOUR_GH_USER>/zen-aiops/actions/permissions -f enabled=true -f allowed_actions=all
+gh api -X PUT repos/<YOUR_GH_USER>/zen-aiops/actions/permissions -F enabled=true -f allowed_actions=all
 ```
+> Note: `enabled` is a **boolean**, so it must use `-F` (typed field). Using `-f enabled=true`
+> sends a string and GitHub rejects it with HTTP 422 "enabled is not a boolean".
 
 **2. Add your AWS secrets** (secrets are NEVER copied to a fork — set your own):
 ```bash
@@ -107,8 +108,9 @@ already in the folder and it's on GitHub.
 
 ## Step 2 — Enable GitHub Actions on the new repo
 ```bash
-gh api -X PUT repos/ajay-bj/zen-aiops/actions/permissions -f enabled=true -f allowed_actions=all
+gh api -X PUT repos/ajay-bj/zen-aiops/actions/permissions -F enabled=true -f allowed_actions=all
 ```
+> `enabled` is a boolean — use `-F` (not `-f`), or GitHub returns HTTP 422 "not a boolean".
 
 ## Step 3 — Add AWS keys so CI can push the image to ECR
 **Reuse the SAME AWS keys you already use for `zen-infra`** (the terraform/iamadmin keys) — no new
@@ -127,8 +129,17 @@ aws ecr describe-images --repository-name aiops-agent --region us-east-1 \
 ```
 You should see `latest` (and a `sha-...` tag). If the ECR repo didn't exist, CI created it.
 
-## Step 5 — Create the Bedrock IAM role (IRSA) — one block, copy-paste
+## Step 5 — Create the agent IAM role (IRSA) — one block, copy-paste
 (Run from the `zen-aiops` folder — it reads `iam/*.json`.)
+
+> The inline policy (`iam/bedrock-policy.json`) grants **two** things the agent needs:
+> - `bedrock:InvokeModel*` — root-cause analysis via Amazon Nova Pro.
+> - `ecr:DescribeImages` / `ecr:ListImages` / `ecr:DescribeRepositories` — so the ImagePullBackOff
+>   heal only rolls back to an image tag that **actually exists in ECR** (a tag pruned by the ECR
+>   lifecycle policy would just fail to pull again). Both are applied by the single command below.
+>
+> `iam/trust-policy.template.json` is a **plain IAM policy document** — do not add a `_comment`
+> field to it; AWS rejects unknown fields with `MalformedPolicyDocument`.
 
 **Linux / macOS / Git Bash / WSL:**
 ```bash
@@ -200,8 +211,16 @@ kubectl logs -f deployment/aiops-agent -n dev              # startup banner
 ---
 
 ## Demo tips (fast + visual)
-- The agent ships with **demo timings**: scans every **15s**, verifies after **20s**, cooldown **60s**
-  (in `k8s/manifests/deployment.yaml`). For production raise these to 30 / 45 / 300.
+- The agent ships with **demo timings**: scans every **15s**, verifies after **20s**, per-pod
+  cooldown **60s**, and a per-deployment **image-rollback cooldown of 150s**
+  (`ROLLBACK_COOLDOWN_SECONDS` in `k8s/manifests/deployment.yaml`). For production raise these to
+  roughly 30 / 45 / 300 / 300.
+- **Why the rollback cooldown matters:** after the agent rolls a service's image back, the old
+  ReplicaSet's failing pod can linger in `ImagePullBackOff` for a bit while ArgoCD converges. The
+  cooldown makes the agent heal **once** and then wait for ArgoCD, instead of thrashing between tags.
+  In the log you'll see one `fix(aiops): rollback ...` then
+  `image rolled back recently; waiting for ArgoCD to converge (cooldown)` — that's expected and
+  correct, not a stall.
 - **Best first demo = CrashLoopBackOff (Test 2):** the agent deletes the pod directly and the
   Deployment recreates it in seconds — no ArgoCD wait, so the heal is near-instant on screen.
 - Image/OOM demos go through git → ArgoCD, so allow ~1–2 min total (ArgoCD's sync cadence adds
@@ -238,13 +257,19 @@ git commit -am "test: break qc-service image (induce ImagePullBackOff)"
 git push
 ```
 **Watch the agent log:** within ~1–2 min the qc-service pod goes `ImagePullBackOff`; the agent logs
-`INCIDENT reason=ImagePullBackOff` → `action=ROLLBACK_IMAGE` → a `fix(aiops): rollback ...` commit.
+`INCIDENT reason=ImagePullBackOff` → `action=ROLLBACK_IMAGE` → **one** `fix(aiops): rollback ...`
+commit to a tag that exists in ECR. It then enters the rollback cooldown and waits for ArgoCD to
+converge (you may see a `waiting for ArgoCD to converge (cooldown)` line — that's normal).
 
 **Verify healed:**
 ```bash
 kubectl get pods -n dev -l app.kubernetes.io/name=qc-service      # 1/1 Running
 git pull --ff-only && grep 'tag:' envs/dev/values-qc-service.yaml # back to a good sha
 ```
+
+> If your gitops repo has old image tags in its history that ECR has since pruned, the agent skips
+> them and rolls back to the most recent tag that still exists in ECR — so the heal always lands on
+> a pullable image. (This needs the ECR read permission from Step 5.)
 
 ---
 
@@ -325,3 +350,5 @@ aws secretsmanager delete-secret --name /pharma/dev/aiops-gitops-token \
 | ArgoCD app `Unknown`/`Missing` source | repo private, ArgoCD can't read it | register `zen-aiops` repo creds in ArgoCD (Settings → Repositories) |
 | pod runs but Bedrock errors in logs | Nova Pro not enabled in Bedrock | enable model access in AWS Bedrock console, or set `BEDROCK_ENABLED=false` (rule-based healing) |
 | agent can't push git fix | PAT wrong/expired | update the secret in Secrets Manager (Step 6), then `kubectl rollout restart deployment/aiops-agent -n dev` |
+| ImagePullBackOff heal keeps flipping tags / `AccessDenied` on ECR in logs | agent role missing ECR read | re-run Step 5 (the `put-role-policy` now includes `ecr:DescribeImages` etc.), then `kubectl rollout restart deployment/aiops-agent -n dev` |
+| ArgoCD app error: `no matches for kind ExternalSecret ... v1beta1` | your ESO serves a different API version | `k8s/manifests/external-secret.yaml` uses `external-secrets.io/v1` (what this cluster's ESO serves). If yours differs, run `kubectl get crd externalsecrets.external-secrets.io -o jsonpath='{.spec.versions[*].name}'` and match it |
