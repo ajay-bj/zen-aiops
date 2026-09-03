@@ -132,10 +132,13 @@ aws secretsmanager create-secret `
 > (The CI copy lives in GitHub secrets; the pod copy must live in Secrets Manager — same token value,
 > two consumers.)
 
-## Step 7 — Deploy via ArgoCD (one-time apply; everything else auto-syncs)
+## Step 7 — Deploy via ArgoCD (one-time bootstrap; everything else auto-syncs)
+This is the ONLY manual `kubectl` — one command, run once. It registers the ArgoCD project + app;
+`kubectl` applies the files in the order given (project first, then app). After this, ArgoCD owns
+the agent (RBAC + ExternalSecret + Deployment from `k8s/manifests/`) and every future change to this
+repo auto-syncs — no more `kubectl`. (Same one-time bootstrap the pharma apps used.)
 ```bash
-kubectl apply -f argocd/aiops-project.yaml
-kubectl apply -f argocd/aiops-agent-app.yaml
+kubectl apply -f argocd/aiops-project.yaml -f argocd/aiops-agent-app.yaml
 ```
 
 ## Step 8 — Verify it's healthy
