@@ -223,12 +223,13 @@ kubectl logs -f deployment/aiops-agent -n dev              # startup banner
   correct, not a stall.
 - **Best first demo = CrashLoopBackOff (Test 2):** the agent deletes the pod directly and the
   Deployment recreates it in seconds — no ArgoCD wait, so the heal is near-instant on screen.
-- Image/OOM demos go through git → ArgoCD, so allow ~1–2 min total (ArgoCD's sync cadence adds
+- The image demo goes through git → ArgoCD, so allow ~1–2 min total (ArgoCD's sync cadence adds
   ~30–90s — that part is normal and outside the agent).
 - Put the agent log front-and-center: `kubectl logs -f deployment/aiops-agent -n dev`. The audience
   will see `🚨 INCIDENT → 🧠 action → fix → ✅ HEALED` as a live play-by-play.
 
-## Test it — induce each of the 3 failures and watch the agent self-heal
+## Test it — induce each failure and watch the agent self-heal
+> Full output-annotated walkthrough: see **`AGENT_TESTING.md`**.
 
 We test on **`qc-service`** (it has ArgoCD `selfHeal` OFF, so a break we induce stays put and the
 agent is unambiguously the one that heals it). We break it the GitOps way (a real commit in
@@ -289,22 +290,7 @@ kubectl get pods -n dev -l app.kubernetes.io/name=qc-service      # fresh pod, 1
 
 ---
 
-### TEST 3 — OOMKilled (memory limit too low)
-
-**Induce** (set an absurdly low memory limit via gitops → ArgoCD applies it → pod OOMKilled):
-```bash
-yq -i '.resources.limits.memory = "16Mi"' envs/dev/values-qc-service.yaml
-git commit -am "test: starve qc-service memory (induce OOMKilled)"
-git push
-```
-**Watch the agent log:** `INCIDENT reason=OOMKilled` → `action=BUMP_MEMORY` →
-`fix(aiops): raise qc-service memory limit 16Mi -> 512Mi ...` commit.
-
-**Verify healed:**
-```bash
-kubectl get pods -n dev -l app.kubernetes.io/name=qc-service            # 1/1 Running, no OOM restarts
-git pull --ff-only && grep -A3 'limits:' envs/dev/values-qc-service.yaml # memory raised
-```
+> A full, output-annotated walkthrough of both demos lives in **`AGENT_TESTING.md`**.
 
 ---
 
