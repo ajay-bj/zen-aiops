@@ -57,6 +57,10 @@ OOM_MEMORY_CEILING_MI = _int("OOM_MEMORY_CEILING_MI", 2048)
 DRY_RUN = _bool("DRY_RUN", False)
 # Per-pod cooldown so one flapping pod can't trigger a storm of fixes.
 COOLDOWN_SECONDS = _int("COOLDOWN_SECONDS", 300)
+# Per-deployment cooldown after an image rollback: don't roll the same service's
+# image again until ArgoCD has had time to sync and garbage-collect the old
+# ReplicaSet. This is the definitive guard against rollback oscillation.
+ROLLBACK_COOLDOWN_SECONDS = _int("ROLLBACK_COOLDOWN_SECONDS", 180)
 # Seconds to wait before verifying recovery.
 VERIFY_DELAY_SECONDS = _int("VERIFY_DELAY_SECONDS", 45)
 # Only ever act on this exact set of services (defense in depth). Comma-separated

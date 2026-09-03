@@ -70,6 +70,11 @@ spec:
               value: "false"
             - name: COOLDOWN_SECONDS
               value: "60"
+            # After rolling back a service's image, wait this long before rolling
+            # it again — lets ArgoCD converge and clean up the old ReplicaSet so a
+            # lingering ImagePullBackOff pod can't cause rollback oscillation.
+            - name: ROLLBACK_COOLDOWN_SECONDS
+              value: "150"
             - name: VERIFY_DELAY_SECONDS
               value: "20"
           resources:
