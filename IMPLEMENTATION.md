@@ -33,6 +33,52 @@ Prereqs: `aws`, `kubectl`, `git`, `gh`, Docker installed; you can reach AWS + th
 
 ---
 
+## Using this in YOUR account (fork-and-use) — READ THIS FIRST
+
+This repo is meant to be **forked**. After you fork it to your GitHub account, do these fork-specific
+things (a fresh fork will NOT build or work until you do):
+
+**1. Enable GitHub Actions on your fork** (GitHub disables Actions on new forks by default):
+- Actions tab → "I understand my workflows, go ahead and enable them", or:
+```bash
+gh api -X PUT repos/<YOUR_GH_USER>/zen-aiops/actions/permissions -f enabled=true -f allowed_actions=all
+```
+
+**2. Add your AWS secrets** (secrets are NEVER copied to a fork — set your own):
+```bash
+gh secret set AWS_ACCESS_KEY_ID     --repo <YOUR_GH_USER>/zen-aiops --body "YOUR_AWS_ACCESS_KEY_ID"
+gh secret set AWS_SECRET_ACCESS_KEY --repo <YOUR_GH_USER>/zen-aiops --body "YOUR_AWS_SECRET_ACCESS_KEY"
+```
+
+**3. Replace the account-specific values** (this repo is wired to a specific account/gitops repo):
+- `304312474711` → **your** 12-digit AWS account ID (in `k8s/manifests/rbac.yaml`, `deployment.yaml`, `iam/trust-policy.template.json`)
+- `ajay-bj/zen-gitops-ajay` → **your** gitops repo (in `k8s/manifests/deployment.yaml` env `GITOPS_REPO`)
+- `argocd/aiops-agent-app.yaml` `repoURL` → **your** fork URL of `zen-aiops`
+```bash
+# from the repo root, replace across all files (Linux/macOS/Git Bash):
+grep -rl '304312474711' . | xargs sed -i 's/304312474711/YOUR_ACCOUNT_ID/g'
+grep -rl 'ajay-bj/zen-gitops-ajay' . | xargs sed -i 's#ajay-bj/zen-gitops-ajay#YOUR_GH_USER/YOUR_GITOPS_REPO#g'
+grep -rl 'ajay-bj/zen-aiops' . | xargs sed -i 's#ajay-bj/zen-aiops#YOUR_GH_USER/zen-aiops#g'
+git commit -am "chore: personalize for my account" && git push
+```
+
+**4. Trigger the CI/CD** (forking does NOT auto-run Actions — you must trigger it):
+- The push in step 3 triggers it automatically (it touches tracked files), OR
+- Run it manually anytime:
+```bash
+gh workflow run build.yml --repo <YOUR_GH_USER>/zen-aiops
+```
+
+> **How the CI/CD triggers, in short:** the workflow (`.github/workflows/build.yml`) runs on **push to
+> `main`** (changes under `src/**`, `Dockerfile`, `requirements.txt`, or the workflow) **or** manual
+> **Run workflow** (`workflow_dispatch`). It builds the agent image and pushes it to your ECR. It does
+> NOT deploy to the cluster — ArgoCD does that (Step 7). So: **push code → CI builds image → ECR;
+> ArgoCD deploys the manifests.**
+
+After the fork setup above, follow Steps 1–8 (Step 1 is only for the original author; forkers skip it).
+
+---
+
 ## Prerequisites (already true for this platform — just confirm)
 - The pharma platform is deployed: 9 apps Running in `dev`, ArgoCD + External Secrets Operator installed.
 - Tools installed: `aws`, `kubectl`, `git`, `gh` (GitHub CLI), Docker.
