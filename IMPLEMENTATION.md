@@ -136,16 +136,19 @@ Also confirm the region/cluster/namespace in `k8s/manifests/deployment.yaml` and
 `iam/trust-policy.template.json` match yours (`<REGION>`, `<CLUSTER>`, `<NAMESPACE>`). Defaults are
 `us-east-1`, `pharma-dev-cluster`, `dev`.
 
+We scope the replace to the folders that actually get deployed (`k8s`, `iam`, `argocd`) so the
+Markdown docs keep their example values.
+
 **Linux / macOS / Git Bash / WSL — do the replacements automatically:**
 ```bash
-grep -rl '304312474711'        . | xargs sed -i "s/304312474711/$ACCOUNT_ID/g"
-grep -rl 'ajay-bj/zen-gitops-ajay' . | xargs sed -i "s#ajay-bj/zen-gitops-ajay#$GITOPS_REPO#g"
-grep -rl 'ajay-bj/zen-aiops'   . | xargs sed -i "s#ajay-bj/zen-aiops#$AIOPS_REPO#g"
+grep -rl '304312474711'            k8s iam argocd | xargs sed -i "s/304312474711/$ACCOUNT_ID/g"
+grep -rl 'ajay-bj/zen-gitops-ajay' k8s iam argocd | xargs sed -i "s#ajay-bj/zen-gitops-ajay#$GITOPS_REPO#g"
+grep -rl 'ajay-bj/zen-aiops'       k8s iam argocd | xargs sed -i "s#ajay-bj/zen-aiops#$AIOPS_REPO#g"
 git commit -am "chore: personalize zen-aiops for my account" && git push
 ```
 **Windows PowerShell — do the replacements automatically:**
 ```powershell
-Get-ChildItem -Recurse -File | ForEach-Object {
+Get-ChildItem -Recurse -File -Path k8s,iam,argocd | ForEach-Object {
   (Get-Content $_.FullName) `
     -replace '304312474711', $ACCOUNT_ID `
     -replace 'ajay-bj/zen-gitops-ajay', $GITOPS_REPO `
