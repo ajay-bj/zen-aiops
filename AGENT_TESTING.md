@@ -8,25 +8,64 @@ Two end-to-end self-healing demos, each shown as: **(1) how to induce the failur
 > Yours will differ — that's expected. What matters is the pattern: `🚨 INCIDENT → 🧠 action → fix →
 > ✅ HEALED`.
 
-All tests run against **`qc-service`** in the `dev` namespace. `qc-service` has ArgoCD
-`selfHeal` **OFF**, so a failure we induce stays put and the agent is unambiguously the thing
-that heals it. We break it the GitOps way (a real commit) or by killing the process — exactly
-how failures happen in reality — and the agent heals it the GitOps way (a commit ArgoCD syncs)
-or by restarting the pod.
+## Before you start — your values + which shell
 
-## Setup — keep the agent log open
+These demos use the same placeholders as `IMPLEMENTATION.md`. Substitute your real values (or
+`export` / set them once, as shown there):
+
+| Placeholder | What it is | Example |
+|---|---|---|
+| `<NAMESPACE>` | namespace the pharma apps run in | `dev` |
+| `<GITOPS_REPO>` | your fork of the gitops repo | `your-user/zen-gitops` |
+| `<TEST_SVC>` | a service with ArgoCD `selfHeal` **OFF** (safe to break) | `qc-service` |
+| `<REGION>` | AWS region of your ECR | `us-east-1` |
+
+**Set them once (optional but handy):**
+
+Linux / macOS / Git Bash / WSL:
+```bash
+export NAMESPACE="dev"
+export GITOPS_REPO="your-user/zen-gitops"
+export TEST_SVC="qc-service"
+```
+Windows PowerShell:
+```powershell
+$NAMESPACE  = "dev"
+$GITOPS_REPO= "your-user/zen-gitops"
+$TEST_SVC   = "qc-service"
+```
+
+**Why `<TEST_SVC>` = `qc-service`:** it has ArgoCD `selfHeal` **OFF**, so a failure we induce stays
+put and the agent is unambiguously the thing that heals it. On a `selfHeal`-ON service, ArgoCD would
+revert a live break before the agent could act. We break it the GitOps way (a real commit) or by
+killing the process — exactly how failures happen in reality — and the agent heals it the GitOps way
+(a commit ArgoCD syncs) or by restarting the pod.
+
+> Requires `yq` installed for the image demos (`git`, `kubectl`, `gh` you already have).
+
+## Setup — keep the agent log open + clone your gitops repo
 
 In one terminal, stream the agent log so you can watch the play-by-play:
 
+Linux / macOS / Git Bash / WSL:
 ```bash
-kubectl logs -f deployment/aiops-agent -n dev
+kubectl logs -f deployment/aiops-agent -n $NAMESPACE
+```
+Windows PowerShell:
+```powershell
+kubectl logs -f deployment/aiops-agent -n $NAMESPACE
 ```
 
-In a second terminal, get a local checkout of **your gitops repo** (`<GITOPS_REPO>`, e.g.
-`your-user/zen-gitops`) — you'll edit + commit here:
+In a second terminal, get a local checkout of **your gitops repo** — you'll edit + commit here:
 
+Linux / macOS / Git Bash / WSL:
 ```bash
-gh repo clone <GITOPS_REPO> _zg
+gh repo clone $GITOPS_REPO _zg
+cd _zg
+```
+Windows PowerShell:
+```powershell
+gh repo clone $GITOPS_REPO _zg
 cd _zg
 ```
 
@@ -37,13 +76,19 @@ cd _zg
 
 ## Demo 1 — CrashLoopBackOff (process crash) → RESTART_POD
 
-This is the best on-screen demo: the agent deletes the crashing pod directly and the Deployment
-recreates it in seconds — no ArgoCD wait, so the heal is near-instant.
+The best on-screen demo: the agent deletes the crashing pod directly and the Deployment recreates it
+in seconds — no ArgoCD wait, so the heal is near-instant.
 
 ### Induce — kill PID 1 in the running container so it crash-loops
 
+Linux / macOS / Git Bash / WSL:
 ```bash
-kubectl exec deployment/qc-service -n dev -c pharma-service -- kill 1
+kubectl exec deployment/$TEST_SVC -n $NAMESPACE -c pharma-service -- kill 1
+# run 2–3 times if the first restart recovers, to push it into CrashLoopBackOff
+```
+Windows PowerShell:
+```powershell
+kubectl exec deployment/$TEST_SVC -n $NAMESPACE -c pharma-service -- kill 1
 # run 2–3 times if the first restart recovers, to push it into CrashLoopBackOff
 ```
 
@@ -69,25 +114,39 @@ Overriding model action 'ROLLBACK_IMAGE' with reason-based 'RESTART_POD' for Cra
 
 ### Verify healed
 
+Linux / macOS / Git Bash / WSL:
 ```bash
-kubectl get pods -n dev -l app.kubernetes.io/name=qc-service   # fresh pod, 1/1 Running
+kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$TEST_SVC   # fresh pod, 1/1 Running
+```
+Windows PowerShell:
+```powershell
+kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$TEST_SVC   # fresh pod, 1/1 Running
 ```
 
 ---
 
 ## Demo 2 — ImagePullBackOff (bad image tag) → ROLLBACK_IMAGE
 
-The agent fixes this the GitOps way: it commits a rollback to a **previous image tag that
-actually exists in ECR**, and ArgoCD syncs it. Allow ~1–2 min (ArgoCD sync cadence adds
-~30–90s — that part is normal and outside the agent).
+The agent fixes this the GitOps way: it commits a rollback to a **previous image tag that actually
+exists in ECR**, and ArgoCD syncs it. Allow ~1–2 min (ArgoCD's sync cadence adds ~30–90s — normal
+and outside the agent).
 
-### Induce — point qc-service at a tag that doesn't exist (via gitops → ArgoCD applies it)
+### Induce — point the service at a tag that doesn't exist (via gitops → ArgoCD applies it)
 
+Linux / macOS / Git Bash / WSL:
 ```bash
-yq -i '.image.tag = "sha-broken999"' envs/dev/values-qc-service.yaml
-git commit -am "test: break qc-service image (induce ImagePullBackOff)"
+yq -i '.image.tag = "sha-broken999"' envs/$NAMESPACE/values-$TEST_SVC.yaml
+git commit -am "test: break $TEST_SVC image (induce ImagePullBackOff)"
 git push
 ```
+Windows PowerShell:
+```powershell
+yq -i ".image.tag = `"sha-broken999`"" envs/$NAMESPACE/values-$TEST_SVC.yaml
+git commit -am "test: break $TEST_SVC image (induce ImagePullBackOff)"
+git push
+```
+> No `yq`? Edit `envs/<NAMESPACE>/values-<TEST_SVC>.yaml` by hand: set `image.tag: sha-broken999`,
+> then `git commit -am "..."` and `git push`.
 
 ### Agent output — detects, rolls back to an ECR-verified tag, verifies, then holds
 
@@ -106,9 +165,9 @@ git push
 
 **What to point out:**
 - The agent detected the bad pull and Bedrock chose `ROLLBACK_IMAGE`.
-- `prev_good_tag=sha-3ceb27b` is chosen because it **actually exists in ECR** — the agent
-  queries ECR and skips any historical tag that the ECR lifecycle policy has since pruned, so
-  the rollback always lands on a pullable image.
+- `prev_good_tag` is a tag that **actually exists in ECR** — the agent queries ECR and skips any
+  historical tag the ECR lifecycle policy has since pruned, so the rollback always lands on a
+  pullable image.
 - It made **exactly one** rollback commit, then entered the per-deployment **rollback cooldown**.
   The `waiting for ArgoCD to converge (cooldown)` line is expected and correct — it prevents the
   agent from thrashing while ArgoCD finishes syncing and cleaning up the old ReplicaSet. No
@@ -116,9 +175,15 @@ git push
 
 ### Verify healed
 
+Linux / macOS / Git Bash / WSL:
 ```bash
-kubectl get pods -n dev -l app.kubernetes.io/name=qc-service       # 1/1 Running on a good tag
-git pull --ff-only && grep 'tag:' envs/dev/values-qc-service.yaml  # back to a good sha
+kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$TEST_SVC       # 1/1 Running on a good tag
+git pull --ff-only && grep 'tag:' envs/$NAMESPACE/values-$TEST_SVC.yaml  # back to a good sha
+```
+Windows PowerShell:
+```powershell
+kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=$TEST_SVC
+git pull --ff-only; Select-String -Path "envs/$NAMESPACE/values-$TEST_SVC.yaml" -Pattern 'tag:'
 ```
 
 ---
@@ -126,13 +191,22 @@ git pull --ff-only && grep 'tag:' envs/dev/values-qc-service.yaml  # back to a g
 ## Reset after testing (optional)
 
 The agent already committed working values, so nothing needs undoing. To force a specific
-known-good state back:
+known-good state back, set `image.tag` to a tag that exists in your ECR (replace `sha-XXXXXXX`):
 
+Linux / macOS / Git Bash / WSL:
 ```bash
 git pull --ff-only
-yq -i '.image.tag = "sha-3ceb27b"' envs/dev/values-qc-service.yaml
-git commit -am "reset qc-service to known-good" && git push
+yq -i '.image.tag = "sha-XXXXXXX"' envs/$NAMESPACE/values-$TEST_SVC.yaml
+git commit -am "reset $TEST_SVC to known-good" && git push
 ```
+Windows PowerShell:
+```powershell
+git pull --ff-only
+yq -i ".image.tag = `"sha-XXXXXXX`"" envs/$NAMESPACE/values-$TEST_SVC.yaml
+git commit -am "reset $TEST_SVC to known-good"; git push
+```
+> Find a tag that exists in ECR with:
+> `aws ecr describe-images --repository-name <TEST_SVC> --region <REGION> --query "imageDetails[].imageTags" --output text`
 
 ---
 
