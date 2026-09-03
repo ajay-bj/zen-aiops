@@ -3,6 +3,11 @@
 Two end-to-end self-healing demos, each shown as: **(1) how to induce the failure**, then
 **(2) the actual agent log output** proving it detected and healed the incident.
 
+> The sample log blocks below are **real captured output** from a reference run, so they contain that
+> account's ID, image tags, and pod names (e.g. `304312474711`, `sha-3ceb27b`, `qc-service-...-xxxxx`).
+> Yours will differ — that's expected. What matters is the pattern: `🚨 INCIDENT → 🧠 action → fix →
+> ✅ HEALED`.
+
 All tests run against **`qc-service`** in the `dev` namespace. `qc-service` has ArgoCD
 `selfHeal` **OFF**, so a failure we induce stays put and the agent is unambiguously the thing
 that heals it. We break it the GitOps way (a real commit) or by killing the process — exactly
@@ -17,10 +22,11 @@ In one terminal, stream the agent log so you can watch the play-by-play:
 kubectl logs -f deployment/aiops-agent -n dev
 ```
 
-In a second terminal, get a local checkout of the gitops repo (you'll edit + commit here):
+In a second terminal, get a local checkout of **your gitops repo** (`<GITOPS_REPO>`, e.g.
+`your-user/zen-gitops`) — you'll edit + commit here:
 
 ```bash
-gh repo clone ajay-bj/zen-gitops-ajay _zg
+gh repo clone <GITOPS_REPO> _zg
 cd _zg
 ```
 
