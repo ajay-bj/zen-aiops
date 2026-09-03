@@ -90,12 +90,43 @@ def read_current_tag(workdir: str, values_file: str) -> str | None:
         return None
 
 
+def _known_bad_tags(workdir: str) -> set[str]:
+    """Tags the agent has already rolled AWAY from are known-bad and must never
+    be chosen again as a rollback target. We recover them from our own commit
+    messages, which have the form:
+
+        fix(aiops): rollback <deployment> image <BAD> -> <GOOD> (auto-heal ...)
+
+    The left-hand tag (<BAD>) is the one that was failing. Without this, a stale
+    replica still pinned to a bad tag can make the agent re-select that bad tag
+    as "previous good", causing an endless good<->bad oscillation.
+    """
+    bad: set[str] = set()
+    try:
+        subjects = _run(
+            ["git", "log", "--format=%s", "-n", "200"], cwd=workdir
+        ).splitlines()
+    except GitOpsError:
+        return bad
+    pat = re.compile(r"rollback\s+\S+\s+image\s+(\S+)\s*->")
+    for subj in subjects:
+        m = pat.search(subj)
+        if m:
+            bad.add(m.group(1))
+    return bad
+
+
 def previous_good_tag(workdir: str, values_file: str) -> str | None:
-    """Find the most recent PRIOR image.tag for this values file from git history,
-    i.e. the value before the current one — the last-known-good tag."""
+    """Find the most recent PRIOR image.tag for this values file from git history
+    that is neither the current tag nor a known-bad tag — i.e. the last-known-good
+    tag we can safely roll back to."""
     rel = f"{config.GITOPS_ENV_DIR}/{values_file}"
     current = read_current_tag(workdir, values_file)
-    # Walk commit history for this file and return the first tag that differs.
+    bad = _known_bad_tags(workdir)
+    bad.discard("")  # defensive
+    if current:
+        bad.add(current)  # never roll back to the tag that's failing right now
+    # Walk commit history for this file and return the first tag that is safe.
     try:
         commits = _run(
             ["git", "log", "--format=%H", "--", rel], cwd=workdir
@@ -108,7 +139,7 @@ def previous_good_tag(workdir: str, values_file: str) -> str | None:
         except GitOpsError:
             continue
         m = re.search(r"^\s*tag:\s*['\"]?([^'\"\s#]+)", blob, re.MULTILINE)
-        if m and m.group(1) != current:
+        if m and m.group(1) not in bad:
             return m.group(1)
     return None
 
@@ -116,6 +147,9 @@ def previous_good_tag(workdir: str, values_file: str) -> str | None:
 def rollback_image_tag(values_file: str, deployment: str, target_tag: str) -> tuple[bool, str]:
     """Set image.tag back to target_tag and commit. Returns (changed, message)."""
     workdir = ensure_repo()
+    # Never roll back TO a tag we've already proven bad — prevents oscillation.
+    if target_tag in _known_bad_tags(workdir):
+        return False, f"refusing rollback to known-bad tag {target_tag}"
     path = _values_path(workdir, values_file)
     with open(path, "r", encoding="utf-8") as f:
         data = _yaml.load(f)
