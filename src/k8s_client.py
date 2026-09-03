@@ -142,3 +142,15 @@ def deployment_ready(apps: client.AppsV1Api, deployment: str, namespace: str) ->
     ready = d.status.ready_replicas or 0
     desired = d.spec.replicas or 1
     return ready, desired
+
+
+def deployment_image(apps: client.AppsV1Api, deployment: str, namespace: str) -> str | None:
+    """Return the Deployment's current desired container image (its declared
+    state). Used to ignore incidents from stale ReplicaSet pods whose image no
+    longer matches what the Deployment wants."""
+    try:
+        d = apps.read_namespaced_deployment(name=deployment, namespace=namespace)
+        containers = d.spec.template.spec.containers or []
+        return containers[0].image if containers else None
+    except Exception:
+        return None

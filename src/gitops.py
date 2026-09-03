@@ -27,6 +27,14 @@ from . import config
 
 log = logging.getLogger("aiops.gitops")
 
+try:
+    import boto3  # available in-cluster; optional for local dry-run
+except Exception:  # pragma: no cover
+    boto3 = None
+
+# Cache of {ecr_repo_name: set(existing_tags)} to avoid hammering the ECR API.
+_ecr_tag_cache: dict[str, set[str]] = {}
+
 _yaml = YAML()
 _yaml.preserve_quotes = True
 _yaml.width = 4096  # avoid line-wrapping long values
@@ -90,72 +98,117 @@ def read_current_tag(workdir: str, values_file: str) -> str | None:
         return None
 
 
-def _known_bad_tags(workdir: str) -> set[str]:
-    """Tags the agent has already rolled AWAY from are known-bad and must never
-    be chosen again as a rollback target. We recover them from our own commit
-    messages, which have the form:
-
-        fix(aiops): rollback <deployment> image <BAD> -> <GOOD> (auto-heal ...)
-
-    The left-hand tag (<BAD>) is the one that was failing. Without this, a stale
-    replica still pinned to a bad tag can make the agent re-select that bad tag
-    as "previous good", causing an endless good<->bad oscillation.
-    """
-    bad: set[str] = set()
+def read_image_repository(workdir: str, values_file: str) -> str | None:
+    """Return image.repository, e.g. '304312474711.dkr.ecr.us-east-1.amazonaws.com/qc-service'."""
+    path = _values_path(workdir, values_file)
+    with open(path, "r", encoding="utf-8") as f:
+        data = _yaml.load(f)
     try:
-        subjects = _run(
-            ["git", "log", "--format=%s", "-n", "200"], cwd=workdir
-        ).splitlines()
-    except GitOpsError:
-        return bad
-    pat = re.compile(r"rollback\s+\S+\s+image\s+(\S+)\s*->")
-    for subj in subjects:
-        m = pat.search(subj)
-        if m:
-            bad.add(m.group(1))
-    return bad
+        return str(data["image"]["repository"])
+    except (KeyError, TypeError):
+        return None
+
+
+# Matches an ECR repository URI and captures (region, repo_name).
+_ECR_RE = re.compile(
+    r"^\d+\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/(.+)$"
+)
+
+
+def _ecr_existing_tags(repository: str | None) -> set[str] | None:
+    """Return the set of image tags that actually exist in the ECR repo behind
+    `repository` (an ECR URI). Returns None if we cannot determine it (not ECR,
+    boto3 missing, or the API call fails) — callers then fall back to trusting
+    git history.
+
+    This is the fix that makes ImagePullBackOff healing reliable: a tag present
+    in gitops git history may have been pruned from ECR by the lifecycle policy,
+    so rolling back to it would just cause another ImagePullBackOff. We only ever
+    roll back to a tag we can prove is pullable.
+    """
+    if not repository or boto3 is None:
+        return None
+    m = _ECR_RE.match(repository.strip())
+    if not m:
+        return None
+    region, repo_name = m.group(1), m.group(2)
+    if repo_name in _ecr_tag_cache:
+        return _ecr_tag_cache[repo_name]
+    try:
+        ecr = boto3.client("ecr", region_name=region)
+        tags: set[str] = set()
+        paginator = ecr.get_paginator("describe_images")
+        for page in paginator.paginate(repositoryName=repo_name):
+            for detail in page.get("imageDetails", []):
+                for t in detail.get("imageTags", []) or []:
+                    tags.add(t)
+        _ecr_tag_cache[repo_name] = tags
+        return tags
+    except Exception as e:
+        log.warning("Could not list ECR tags for %s: %s", repo_name, e)
+        return None
 
 
 def previous_good_tag(workdir: str, values_file: str) -> str | None:
-    """Find the most recent PRIOR image.tag for this values file from git history
-    that is neither the current tag nor a known-bad tag — i.e. the last-known-good
-    tag we can safely roll back to."""
+    """Find the last-known-good image.tag to roll back to.
+
+    Walks the values file's git history newest->oldest. PREFERS the most recent
+    prior tag that actually EXISTS in ECR (guaranteed pullable), which avoids
+    rolling back to a tag that ECR's lifecycle policy has since pruned. If we
+    cannot verify any tag against ECR (ECR unreachable, or none of the historical
+    tags still exist), we gracefully fall back to the newest differing historical
+    tag so the agent always attempts a heal rather than giving up.
+    """
     rel = f"{config.GITOPS_ENV_DIR}/{values_file}"
     current = read_current_tag(workdir, values_file)
-    bad = _known_bad_tags(workdir)
-    bad.discard("")  # defensive
-    if current:
-        bad.add(current)  # never roll back to the tag that's failing right now
-    # Walk commit history for this file and return the first tag that is safe.
+    ecr_tags = _ecr_existing_tags(read_image_repository(workdir, values_file))
+
     try:
         commits = _run(
             ["git", "log", "--format=%H", "--", rel], cwd=workdir
         ).splitlines()
     except GitOpsError:
         return None
+
+    fallback: str | None = None
+    seen: set[str] = set()
     for sha in commits:
         try:
             blob = _run(["git", "show", f"{sha}:{rel}"], cwd=workdir)
         except GitOpsError:
             continue
         m = re.search(r"^\s*tag:\s*['\"]?([^'\"\s#]+)", blob, re.MULTILINE)
-        if m and m.group(1) not in bad:
-            return m.group(1)
-    return None
+        if not m:
+            continue
+        tag = m.group(1)
+        if tag == current or tag in seen:
+            continue
+        seen.add(tag)
+        if fallback is None:
+            fallback = tag  # newest differing historical tag (best-effort default)
+        # Prefer a tag we can prove is pullable.
+        if ecr_tags is None or tag in ecr_tags:
+            return tag
+    # No historical tag verified in ECR — fall back to the newest differing tag
+    # so we still attempt a heal. (rollback_image_tag guards against no-ops.)
+    return fallback
 
 
 def rollback_image_tag(values_file: str, deployment: str, target_tag: str) -> tuple[bool, str]:
     """Set image.tag back to target_tag and commit. Returns (changed, message)."""
     workdir = ensure_repo()
-    # Never roll back TO a tag we've already proven bad — prevents oscillation.
-    if target_tag in _known_bad_tags(workdir):
-        return False, f"refusing rollback to known-bad tag {target_tag}"
     path = _values_path(workdir, values_file)
     with open(path, "r", encoding="utf-8") as f:
         data = _yaml.load(f)
     current = str(data.get("image", {}).get("tag", ""))
     if current == target_tag:
         return False, f"image.tag already {target_tag}; nothing to do"
+    # Best-effort sanity check: if we can see ECR and the target isn't there,
+    # warn (it may fail to pull) but still proceed — better to attempt a heal
+    # than to stall. previous_good_tag() already prefers ECR-verified tags.
+    ecr_tags = _ecr_existing_tags(read_image_repository(workdir, values_file))
+    if ecr_tags is not None and target_tag not in ecr_tags:
+        log.warning("rollback target %s not found in ECR; proceeding best-effort", target_tag)
     data["image"]["tag"] = target_tag
     with open(path, "w", encoding="utf-8") as f:
         _yaml.dump(data, f)

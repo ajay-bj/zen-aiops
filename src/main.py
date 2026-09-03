@@ -58,6 +58,19 @@ def handle_incident(core, apps, pod, incident) -> None:
         log.warning("Deployment %s not in the managed allow-list; skipping (safety)", deployment)
         return
 
+    # Ignore incidents from STALE ReplicaSet pods. When a Deployment rolls to a
+    # new image, the old ReplicaSet's failing pod can linger (esp. in
+    # ImagePullBackOff, where it never terminates cleanly). Acting on it would
+    # heal a tag the Deployment no longer wants, causing oscillation. Only act
+    # when the failing pod's image matches the Deployment's current desired image.
+    if incident.reason in ("ImagePullBackOff", "ErrImagePull"):
+        desired_image = k8s_client.deployment_image(apps, deployment, incident.namespace)
+        if desired_image and incident.image and incident.image != desired_image:
+            log.info("  Ignoring stale pod %s (image %s != deployment desired %s)",
+                     incident.pod_name, incident.image, desired_image)
+            _mark(incident.pod_name)
+            return
+
     _mark(incident.pod_name)
 
     # ── Gather context ──

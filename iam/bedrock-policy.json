@@ -9,6 +9,16 @@
         "bedrock:InvokeModelWithResponseStream"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ReadEcrImageTags",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+        "ecr:DescribeRepositories"
+      ],
+      "Resource": "*"
     }
   ]
 }
