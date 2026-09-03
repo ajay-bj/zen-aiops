@@ -19,48 +19,55 @@ platform the other four hands-on repos build, so every value you need already ex
 
 ---
 
-## 0. Fill in YOUR values first (used throughout this guide)
+## 0. Set YOUR values first (used throughout this guide)
 
-Everywhere below you'll see these placeholders. Write down your real values once, then substitute them
-as you go. To make copy-paste easy, you can also `export` them in your shell (see the two blocks).
+Everywhere below you'll see these placeholders. **You don't need to hand-write most of them** — the
+blocks below pull them straight from your AWS account and cluster. Only the GitHub repo names are
+yours to state. Run one block in your shell and the rest of the guide's commands will just work.
 
-| Placeholder | What it is | How to find it |
+| Placeholder | What it is | Where to get it (don't guess — look it up) |
 |---|---|---|
-| `<GH_USER>` | your GitHub username/org | your GitHub profile |
-| `<AIOPS_REPO>` | your fork of this repo | usually `<GH_USER>/zen-aiops` |
-| `<GITOPS_REPO>` | your fork of the gitops repo | e.g. `<GH_USER>/zen-gitops` (from the zen-gitops hands-on) |
+| `<GH_USER>` | your GitHub username/org | `gh api user --jq .login` (or your GitHub profile) |
+| `<AIOPS_REPO>` | your fork of this repo | it's just `<GH_USER>/zen-aiops` |
+| `<GITOPS_REPO>` | your fork of the gitops repo | your zen-gitops fork, e.g. `<GH_USER>/zen-gitops` |
 | `<ACCOUNT_ID>` | your 12-digit AWS account ID | `aws sts get-caller-identity --query Account --output text` |
-| `<REGION>` | AWS region of your cluster/ECR | e.g. `us-east-1` |
-| `<CLUSTER>` | your EKS cluster name | e.g. `pharma-dev-cluster` (from zen-infra) |
-| `<NAMESPACE>` | namespace the pharma apps run in | `dev` (this guide assumes `dev`) |
-| `<AIOPS_ROLE>` | IAM role name to create for the agent | e.g. `pharma-dev-aiops-role` |
+| `<REGION>` | region of your cluster/ECR | `aws configure get region` (whatever zen-infra deployed into) |
+| `<CLUSTER>` | your EKS cluster name | `aws eks list-clusters --query "clusters[0]" --output text` |
+| `<NAMESPACE>` | namespace the pharma apps run in | `dev` — the namespace your zen-gitops apps deploy to |
+| `<AIOPS_ROLE>` | IAM role name to create for the agent | you choose it; `pharma-dev-aiops-role` is a good default |
 
-**Linux / macOS / Git Bash / WSL — set them once:**
+**Linux / macOS / Git Bash / WSL — auto-discover most values, then set the rest:**
 ```bash
-export GH_USER="your-github-user"
-export AIOPS_REPO="$GH_USER/zen-aiops"
-export GITOPS_REPO="$GH_USER/zen-gitops"
 export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-export REGION="us-east-1"
-export CLUSTER="pharma-dev-cluster"
+export REGION="$(aws configure get region)"                          # fallback: export REGION=us-east-1
+export CLUSTER="$(aws eks list-clusters --region $REGION --query 'clusters[0]' --output text)"
+export GH_USER="$(gh api user --jq .login)"
 export NAMESPACE="dev"
+export AIOPS_REPO="$GH_USER/zen-aiops"
+export GITOPS_REPO="$GH_USER/zen-gitops"                              # change if your gitops fork has a different name
 export AIOPS_ROLE="pharma-dev-aiops-role"
+# sanity check what got discovered:
+echo "ACCOUNT_ID=$ACCOUNT_ID REGION=$REGION CLUSTER=$CLUSTER GH_USER=$GH_USER"
 ```
 
-**Windows PowerShell — set them once:**
+**Windows PowerShell — auto-discover most values, then set the rest:**
 ```powershell
-$GH_USER    = "your-github-user"
-$AIOPS_REPO = "$GH_USER/zen-aiops"
-$GITOPS_REPO= "$GH_USER/zen-gitops"
 $ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
-$REGION     = "us-east-1"
-$CLUSTER    = "pharma-dev-cluster"
+$REGION     = (aws configure get region); if (-not $REGION) { $REGION = "us-east-1" }
+$CLUSTER    = (aws eks list-clusters --region $REGION --query "clusters[0]" --output text)
+$GH_USER    = (gh api user --jq .login)
 $NAMESPACE  = "dev"
+$AIOPS_REPO = "$GH_USER/zen-aiops"
+$GITOPS_REPO= "$GH_USER/zen-gitops"      # change if your gitops fork has a different name
 $AIOPS_ROLE = "pharma-dev-aiops-role"
+# sanity check what got discovered:
+"ACCOUNT_ID=$ACCOUNT_ID REGION=$REGION CLUSTER=$CLUSTER GH_USER=$GH_USER"
 ```
 
-> Throughout the guide, commands use these variables where possible. Where a file must be edited by
-> hand, the guide tells you exactly which file and which string to change.
+> If you have more than one EKS cluster, `clusters[0]` may pick the wrong one — run
+> `aws eks list-clusters` and set `CLUSTER` to the right name. Everything else above is safe to
+> auto-discover. Where a file must be edited by hand, the guide tells you exactly which file and
+> which string to change.
 
 ---
 
