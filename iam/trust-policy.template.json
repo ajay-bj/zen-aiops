@@ -1,0 +1,19 @@
+{
+  "_comment": "IRSA trust policy TEMPLATE for pharma-dev-aiops-role. Replace <OIDC_ID> with the pharma-dev-cluster OIDC provider id (see README). SA is dev/aiops-agent. Account is 304312474711.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::304312474711:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/<OIDC_ID>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.eks.us-east-1.amazonaws.com/id/<OIDC_ID>:aud": "sts.amazonaws.com",
+          "oidc.eks.us-east-1.amazonaws.com/id/<OIDC_ID>:sub": "system:serviceaccount:dev:aiops-agent"
+        }
+      }
+    }
+  ]
+}

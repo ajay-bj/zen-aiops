@@ -1,0 +1,46 @@
+# ArgoCD Application for the AIOps self-healing agent.
+#
+# Deploys the agent (RBAC + ESO ExternalSecret + Deployment) from THIS repo's
+# k8s/manifests directory into the dev namespace of pharma-dev-cluster — the same
+# GitOps model as the 9 pharma services, so there is no manual `kubectl apply`.
+#
+# Register it once (see README):
+#   1. kubectl apply -f argocd/aiops-project.yaml       # the 'aiops' AppProject
+#   2. (private repo only) register zen-aiops creds in ArgoCD
+#   3. kubectl apply -f argocd/aiops-agent-app.yaml
+# After that, every push to this repo's k8s/manifests is auto-synced by ArgoCD.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aiops-agent-dev
+  namespace: argocd
+  labels:
+    env: dev
+    app: aiops-agent
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: aiops
+  source:
+    repoURL: https://github.com/ajay-bj/zen-aiops.git
+    targetRevision: HEAD
+    path: k8s/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

@@ -1,0 +1,93 @@
+# AIOps Self-Healing Agent Deployment — applied by ArgoCD (aiops-agent-dev) into
+# the `dev` namespace of pharma-dev-cluster. Depends on:
+#   * ECR image aiops-agent:latest (pushed by CI)
+#   * ServiceAccount aiops-agent (rbac.yaml) with IRSA -> pharma-dev-aiops-role
+#   * Secret aiops-gitops-token (external-secret.yaml, synced by ESO)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-agent
+  namespace: dev
+  labels:
+    app: aiops-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiops-agent
+  template:
+    metadata:
+      labels:
+        app: aiops-agent
+    spec:
+      serviceAccountName: aiops-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: agent
+          image: 304312474711.dkr.ecr.us-east-1.amazonaws.com/aiops-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - name: health
+              containerPort: 8000
+          env:
+            # ── What to watch ──
+            - name: WATCH_NAMESPACE
+              value: "dev"
+            # Demo-friendly timings so the audience sees detect -> heal quickly.
+            # For production, raise CHECK_INTERVAL to 30 and COOLDOWN to 300.
+            - name: CHECK_INTERVAL_SECONDS
+              value: "15"
+            # ── Bedrock (root-cause analysis) ──
+            - name: BEDROCK_REGION
+              value: "us-east-1"
+            - name: BEDROCK_MODEL
+              value: "amazon.nova-pro-v1:0"
+            - name: BEDROCK_ENABLED
+              value: "true"
+            # ── GitOps remediation (durable, ArgoCD-respecting) ──
+            - name: GITOPS_REPO
+              value: "ajay-bj/zen-gitops-ajay"
+            - name: GITOPS_BRANCH
+              value: "main"
+            - name: GITOPS_ENV_DIR
+              value: "envs/dev"
+            - name: GITOPS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aiops-gitops-token   # created by ESO (external-secret.yaml)
+                  key: GITOPS_TOKEN
+            - name: GIT_AUTHOR_NAME
+              value: "aiops-agent[bot]"
+            - name: GIT_AUTHOR_EMAIL
+              value: "aiops-agent@users.noreply.github.com"
+            # ── Safety ──
+            # Start DRY_RUN=true to observe decisions; set "false" to enable healing.
+            - name: DRY_RUN
+              value: "false"
+            - name: COOLDOWN_SECONDS
+              value: "60"
+            - name: VERIFY_DELAY_SECONDS
+              value: "20"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10

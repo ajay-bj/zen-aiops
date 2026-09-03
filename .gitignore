@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Local git checkout the agent uses for GitOps remediation
+/_gitops_work/
+*.log
+
+# Secrets — never commit
+*.pem
+*-token.txt
+kubeconfig*

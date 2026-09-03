@@ -1,0 +1,28 @@
+# Dedicated ArgoCD AppProject for the AIOps agent — keeps zen-aiops fully
+# self-contained instead of widening the pharma project's sourceRepos.
+#
+# Register once:  kubectl apply -f argocd/aiops-project.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: aiops
+  namespace: argocd
+  labels:
+    app: aiops-agent
+spec:
+  description: Zen AIOps self-healing agent
+  sourceRepos:
+    - "https://github.com/ajay-bj/zen-aiops.git"
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: dev
+  # The agent's RBAC creates a ClusterRole/Binding, so cluster-scoped resources
+  # must be permitted.
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: false

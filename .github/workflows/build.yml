@@ -1,0 +1,50 @@
+name: Build & Push AIOps Agent to ECR
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "src/**"
+      - "requirements.txt"
+      - "Dockerfile"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: aiops-agent
+
+jobs:
+  build:
+    name: Build · Push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION" \
+                 --image-scanning-configuration scanOnPush=true
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          SHORT_TAG="sha-${GITHUB_SHA::7}"
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$SHORT_TAG" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$SHORT_TAG"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "Pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$SHORT_TAG and :latest"
